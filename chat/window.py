@@ -159,7 +159,8 @@ class ChatWindow(ctk.CTkToplevel):
                 chats = self.service.get_user_chats(self.current_user.id)
             for chat in chats:
                 if self.selected_chat == (chat["type"], chat["id"]):
-                    self.heading.configure(text=chat["title"])
+                    prefix = "Чат события: " if chat["type"] == "group" else ""
+                    self.heading.configure(text=prefix + chat["title"])
         except (ValueError, PermissionError, sqlite3.Error) as exc:
             self.status.configure(text=f"Не удалось обновить чаты: {exc}")
             return
@@ -199,7 +200,8 @@ class ChatWindow(ctk.CTkToplevel):
     def _select_chat(self, chat):
         self.selected_chat = (chat["type"], chat["id"])
         self._shown_messages = None
-        self.heading.configure(text=chat["title"])
+        prefix = "Чат события: " if chat["type"] == "group" else ""
+        self.heading.configure(text=prefix + chat["title"])
         if chat["type"] == "group":
             self.chat_note.configure(text="Чат события. Участники определяются доступом к событию.")
             self.members_button.grid()
