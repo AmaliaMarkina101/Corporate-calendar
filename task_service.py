@@ -99,10 +99,10 @@ class TaskService:
 
     def add_comment(self, task_id: int, user_id: int, text: str) -> int:
         task = self._get_task(task_id)
-        self.events.require_event_access(user_id, task["event_id"])
         # Не разрешаем вызывать функцию от имени другого пользователя.
-        if user_id != self.current_user.id and self.current_user.role != "admin":
+        if user_id != self.current_user.id:
             raise AuthorizationError("Нельзя добавлять комментарии от имени другого пользователя.")
+        self.events.require_event_access(self.current_user.id, task["event_id"])
         comment_text = (text or "").strip()
         if not comment_text:
             raise ValueError("Комментарий не может быть пустым.")
@@ -150,6 +150,8 @@ class TaskService:
         )
         if not valid:
             raise ValueError("Исполнитель должен входить в команду этого события.")
+        if not self.events.has_access_to_event(assignee_id, event_id):
+            raise ValueError("У исполнителя нет доступа к этому событию.")
 
     def get_comments(self, task_id: int) -> list[dict]:
         task = self._get_task(task_id)
