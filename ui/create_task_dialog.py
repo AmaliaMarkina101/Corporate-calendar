@@ -47,7 +47,7 @@ class CreateTaskDialog(ctk.CTkToplevel):
         self.assignee_ids = {}
         if current_user.role == "teamlead":
             ctk.CTkLabel(form, text="Исполнитель — кто отвечает за задачу").grid(row=8, column=0, sticky="w")
-            members = EventService(service.db).get_team_members_for_event(event_id)
+            members = EventService(service.db).get_team_members_for_event(event_id, current_user.id)
             self.assignee_ids[f"{current_user.username} (я)"] = current_user.id
             for member in members:
                 self.assignee_ids[member["username"]] = member["id"]

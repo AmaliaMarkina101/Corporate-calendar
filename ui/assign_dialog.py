@@ -21,7 +21,7 @@ class AssignDialog(ctk.CTkToplevel):
             font=ctk.CTkFont(size=15, weight="bold"), wraplength=340
         ).pack(padx=18, pady=(18, 10))
 
-        members = EventService(service.db).get_team_members_for_event(task["event_id"])
+        members = EventService(service.db).get_team_members_for_event(task["event_id"], current_user.id)
         self.members = {m["username"]: m["id"] for m in members}
         # Тимлид также может назначить задачу себе.
         self.members[current_user.username + " (я)"] = current_user.id
