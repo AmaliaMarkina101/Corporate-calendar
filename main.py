@@ -1,4 +1,5 @@
 import customtkinter as ctk
+import contextlib
 
 from db import db
 from auth import User
@@ -10,9 +11,10 @@ DEMO_USER_ID = 1
 DEMO_EVENT_ID = 1
 
 
-def seed_demo_data():
+def seed_demo_data(database=db):
     """Добавляет демоданные только в пустую базу."""
-    with db.connect() as conn:
+    with contextlib.closing(database.connect()) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
         existing = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         if existing:
             return
@@ -34,7 +36,13 @@ def seed_demo_data():
             "INSERT INTO team_members (team_id, user_id) VALUES (1, ?)",
             [(1,), (2,), (3,)],
         )
-        conn.execute("INSERT INTO events (id, team_id, title) VALUES (1, 1, 'Подготовка проекта')")
+        conn.execute("""UPDATE users SET first_name = CASE id
+                            WHEN 1 THEN 'Павел' WHEN 2 THEN 'Анна'
+                            WHEN 3 THEN 'Иван' ELSE 'Администратор' END,
+                            last_name = CASE id WHEN 1 THEN 'Иванов'
+                            WHEN 2 THEN 'Петрова' WHEN 3 THEN 'Соколов' ELSE '' END""")
+        conn.execute("""INSERT INTO events (id, team_id, title, creator_id, visibility)
+                        VALUES (1, 1, 'Подготовка проекта', 1, 'restricted')""")
         conn.executemany(
             "INSERT INTO event_members (event_id, user_id) VALUES (1, ?)",
             [(1,), (2,), (3,)],

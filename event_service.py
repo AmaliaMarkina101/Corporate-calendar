@@ -20,25 +20,30 @@ class EventService:
         return event
 
     def has_access_to_event(self, user_id: int, event_id: int) -> bool:
-        user = self.db.fetch_one("SELECT role FROM users WHERE id = ?", (user_id,))
+        user = self.db.fetch_one("SELECT id FROM users WHERE id = ?", (user_id,))
         if not user:
             return False
-        if user["role"] == "admin":
-            return True
         event = self.db.fetch_one(
-            "SELECT team_id FROM events WHERE id = ?", (event_id,)
+            "SELECT team_id, creator_id, visibility FROM events WHERE id = ?", (event_id,)
         )
         if not event:
             return False
-        if self.db.fetch_one(
+        if event["creator_id"] == user_id:
+            return True
+        if event["visibility"] == "private":
+            return False
+        if event["visibility"] == "public":
+            return bool(self.db.fetch_one(
+                """SELECT 1 FROM teams t
+                   WHERE t.id = ? AND (t.teamlead_id = ? OR EXISTS (
+                       SELECT 1 FROM team_members tm
+                       WHERE tm.team_id = t.id AND tm.user_id = ?
+                   ))""",
+                (event["team_id"], user_id, user_id),
+            ))
+        return bool(self.db.fetch_one(
             "SELECT 1 AS ok FROM event_members WHERE event_id=? AND user_id=?",
             (event_id, user_id),
-        ):
-            return True
-        # Тимлид команды имеет доступ к событиям своей команды даже без отдельной записи.
-        return bool(self.db.fetch_one(
-            "SELECT 1 AS ok FROM teams WHERE id=? AND teamlead_id=?",
-            (event["team_id"], user_id),
         ))
 
     def require_event_access(self, user_id: int, event_id: int) -> None:

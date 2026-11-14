@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import contextlib
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -26,6 +27,8 @@ class Database:
             username TEXT NOT NULL UNIQUE,
             email TEXT NOT NULL UNIQUE,
             password TEXT NOT NULL,
+            first_name TEXT NOT NULL DEFAULT '',
+            last_name TEXT NOT NULL DEFAULT '',
             role TEXT NOT NULL CHECK (role IN ('admin', 'teamlead', 'member'))
         );
 
@@ -48,6 +51,9 @@ class Database:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             team_id INTEGER NOT NULL,
             title TEXT NOT NULL,
+            creator_id INTEGER REFERENCES users(id),
+            visibility TEXT NOT NULL DEFAULT 'restricted'
+                CHECK (visibility IN ('private', 'restricted', 'public')),
             FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
         );
 
@@ -88,23 +94,68 @@ class Database:
 
         CREATE INDEX IF NOT EXISTS idx_tasks_event_id ON tasks(event_id);
         CREATE INDEX IF NOT EXISTS idx_task_comments_task_id ON task_comments(task_id);
+
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL,
+            sender_id INTEGER NOT NULL,
+            text TEXT NOT NULL CHECK (length(trim(text)) > 0),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+            FOREIGN KEY (sender_id) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS private_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_id INTEGER NOT NULL,
+            receiver_id INTEGER NOT NULL,
+            text TEXT NOT NULL CHECK (length(trim(text)) > 0),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (sender_id) REFERENCES users(id),
+            FOREIGN KEY (receiver_id) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_event
+            ON chat_messages(event_id, created_at, id);
+        CREATE INDEX IF NOT EXISTS idx_private_messages_pair
+            ON private_messages(sender_id, receiver_id, created_at, id);
         """
-        with self.connect() as conn:
+        with contextlib.closing(self.connect()) as conn, conn:
             conn.executescript(schema)
+            conn.execute("BEGIN IMMEDIATE")
+            self._update_schema(conn)
+
+    def _update_schema(self, conn):
+        # Старую базу обновляем на месте, не удаляя события и задачи.
+        user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+        for name in ("first_name", "last_name"):
+            if name not in user_columns:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+
+        event_columns = {row["name"] for row in conn.execute("PRAGMA table_info(events)")}
+        if "visibility" not in event_columns:
+            conn.execute("""ALTER TABLE events ADD COLUMN visibility TEXT NOT NULL
+                            DEFAULT 'restricted'
+                            CHECK (visibility IN ('private', 'restricted', 'public'))""")
+        if "creator_id" not in event_columns:
+            conn.execute("ALTER TABLE events ADD COLUMN creator_id INTEGER REFERENCES users(id)")
+            conn.execute("""UPDATE events SET creator_id = (
+                SELECT teamlead_id FROM teams WHERE teams.id = events.team_id
+            )""")
 
     def fetch_one(self, query: str, params: Iterable[Any] = ()) -> dict | None:
-        with self.connect() as conn:
+        with contextlib.closing(self.connect()) as conn:
             row = conn.execute(query, tuple(params)).fetchone()
             return dict(row) if row else None
 
     def fetch_all(self, query: str, params: Iterable[Any] = ()) -> list[dict]:
-        with self.connect() as conn:
+        with contextlib.closing(self.connect()) as conn:
             rows = conn.execute(query, tuple(params)).fetchall()
             return [dict(row) for row in rows]
 
     def execute(self, query: str, params: Iterable[Any] = ()) -> int:
         """Выполняет изменение и возвращает lastrowid."""
-        with self.connect() as conn:
+        with contextlib.closing(self.connect()) as conn, conn:
             cursor = conn.execute(query, tuple(params))
             return int(cursor.lastrowid or 0)
 
