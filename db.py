@@ -27,121 +27,97 @@ class Database:
             username TEXT NOT NULL UNIQUE,
             email TEXT NOT NULL UNIQUE,
             password TEXT NOT NULL,
-            first_name TEXT NOT NULL DEFAULT '',
-            last_name TEXT NOT NULL DEFAULT '',
             role TEXT NOT NULL CHECK (role IN ('admin', 'teamlead', 'member'))
         );
 
-        CREATE TABLE IF NOT EXISTS teams (
+        CREATE TABLE IF NOT EXISTS groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            teamlead_id INTEGER NOT NULL,
-            FOREIGN KEY (teamlead_id) REFERENCES users(id)
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            creator_id INTEGER NOT NULL REFERENCES users(id)
         );
 
-        CREATE TABLE IF NOT EXISTS team_members (
-            team_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            PRIMARY KEY (team_id, user_id),
-            FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        CREATE TABLE IF NOT EXISTS group_members (
+            group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            PRIMARY KEY (group_id, user_id)
         );
 
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            team_id INTEGER NOT NULL,
             title TEXT NOT NULL,
-            creator_id INTEGER REFERENCES users(id),
-            visibility TEXT NOT NULL DEFAULT 'restricted'
-                CHECK (visibility IN ('private', 'restricted', 'public')),
-            FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+            description TEXT NOT NULL DEFAULT '',
+            start_time TEXT NOT NULL,
+            end_time TEXT NOT NULL,
+            access_type TEXT NOT NULL CHECK (access_type IN ('private', 'limited', 'public')),
+            category TEXT NOT NULL DEFAULT 'work' CHECK (category IN ('personal', 'work', 'rest')),
+            author_id INTEGER NOT NULL REFERENCES users(id),
+            group_id INTEGER REFERENCES groups(id) ON DELETE SET NULL
         );
 
-        CREATE TABLE IF NOT EXISTS event_members (
-            event_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            PRIMARY KEY (event_id, user_id),
-            FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        CREATE TABLE IF NOT EXISTS event_access (
+            event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            permission TEXT NOT NULL CHECK (permission IN ('read', 'edit_tasks', 'full')),
+            PRIMARY KEY (event_id, user_id)
         );
 
         CREATE TABLE IF NOT EXISTS tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id INTEGER NOT NULL,
+            event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
             title TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'not_started'
                 CHECK (status IN ('not_started', 'in_progress', 'done')),
-            creator_id INTEGER NOT NULL,
-            assignee_id INTEGER NOT NULL,
-            reminder_time TEXT NULL,
-            deadline TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
-            FOREIGN KEY (creator_id) REFERENCES users(id),
-            FOREIGN KEY (assignee_id) REFERENCES users(id)
+            creator_id INTEGER NOT NULL REFERENCES users(id),
+            assignee_id INTEGER NOT NULL REFERENCES users(id),
+            reminder_time TEXT,
+            deadline TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS task_comments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
+            task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id),
             text TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_id) REFERENCES users(id)
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
-
-        CREATE INDEX IF NOT EXISTS idx_tasks_event_id ON tasks(event_id);
-        CREATE INDEX IF NOT EXISTS idx_task_comments_task_id ON task_comments(task_id);
 
         CREATE TABLE IF NOT EXISTS chat_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id INTEGER NOT NULL,
-            sender_id INTEGER NOT NULL,
+            event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+            sender_id INTEGER NOT NULL REFERENCES users(id),
             text TEXT NOT NULL CHECK (length(trim(text)) > 0),
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
-            FOREIGN KEY (sender_id) REFERENCES users(id)
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS private_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sender_id INTEGER NOT NULL,
-            receiver_id INTEGER NOT NULL,
+            sender_id INTEGER NOT NULL REFERENCES users(id),
+            receiver_id INTEGER NOT NULL REFERENCES users(id),
             text TEXT NOT NULL CHECK (length(trim(text)) > 0),
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (sender_id) REFERENCES users(id),
-            FOREIGN KEY (receiver_id) REFERENCES users(id)
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE INDEX IF NOT EXISTS idx_tasks_event_id ON tasks(event_id);
+        CREATE INDEX IF NOT EXISTS idx_task_comments_task_id ON task_comments(task_id);
         CREATE INDEX IF NOT EXISTS idx_chat_messages_event
             ON chat_messages(event_id, created_at, id);
         CREATE INDEX IF NOT EXISTS idx_private_messages_pair
             ON private_messages(sender_id, receiver_id, created_at, id);
         """
         with contextlib.closing(self.connect()) as conn, conn:
+            columns = [row["name"] for row in conn.execute("PRAGMA table_info(events)")]
+            if columns and (
+                "author_id" not in columns
+                or "access_type" not in columns
+                or "group_id" not in columns
+            ):
+                raise ValueError(
+                    "В базе осталась прежняя схема событий. Сохраните её копию "
+                    "и подключите базу со схемой из задания."
+                )
             conn.executescript(schema)
-            conn.execute("BEGIN IMMEDIATE")
-            self._update_schema(conn)
-
-    def _update_schema(self, conn):
-        # Старую базу обновляем на месте, не удаляя события и задачи.
-        user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
-        for name in ("first_name", "last_name"):
-            if name not in user_columns:
-                conn.execute(f"ALTER TABLE users ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
-
-        event_columns = {row["name"] for row in conn.execute("PRAGMA table_info(events)")}
-        if "visibility" not in event_columns:
-            conn.execute("""ALTER TABLE events ADD COLUMN visibility TEXT NOT NULL
-                            DEFAULT 'restricted'
-                            CHECK (visibility IN ('private', 'restricted', 'public'))""")
-        if "creator_id" not in event_columns:
-            conn.execute("ALTER TABLE events ADD COLUMN creator_id INTEGER REFERENCES users(id)")
-            conn.execute("""UPDATE events SET creator_id = (
-                SELECT teamlead_id FROM teams WHERE teams.id = events.team_id
-            )""")
 
     def fetch_one(self, query: str, params: Iterable[Any] = ()) -> dict | None:
         with contextlib.closing(self.connect()) as conn:
@@ -154,7 +130,6 @@ class Database:
             return [dict(row) for row in rows]
 
     def execute(self, query: str, params: Iterable[Any] = ()) -> int:
-        """Выполняет изменение и возвращает lastrowid."""
         with contextlib.closing(self.connect()) as conn, conn:
             cursor = conn.execute(query, tuple(params))
             return int(cursor.lastrowid or 0)

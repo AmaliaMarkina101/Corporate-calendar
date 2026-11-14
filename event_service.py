@@ -1,78 +1,57 @@
-from __future__ import annotations
-
-from db import Database
-from auth import User, AuthorizationError
+from auth import AuthorizationError
 
 
 class EventService:
-    def __init__(self, database: Database):
+    def __init__(self, database):
         self.db = database
 
-    def get_event(self, event_id: int) -> dict:
-        event = self.db.fetch_one(
-            """SELECT e.*, t.teamlead_id
-               FROM events e JOIN teams t ON t.id = e.team_id
-               WHERE e.id = ?""",
-            (event_id,),
-        )
+    def get_event(self, event_id):
+        event = self.db.fetch_one("SELECT * FROM events WHERE id = ?", (event_id,))
         if not event:
-            raise ValueError(f"Событие с id={event_id} не найдено")
+            raise ValueError("Событие не найдено.")
         return event
 
-    def has_access_to_event(self, user_id: int, event_id: int) -> bool:
-        user = self.db.fetch_one("SELECT id FROM users WHERE id = ?", (user_id,))
-        if not user:
-            return False
+    def get_permission(self, user_id, event_id):
+        if not self.db.fetch_one("SELECT id FROM users WHERE id = ?", (user_id,)):
+            return None
         event = self.db.fetch_one(
-            """SELECT e.team_id, e.creator_id, e.visibility, t.teamlead_id
-               FROM events e JOIN teams t ON t.id = e.team_id WHERE e.id = ?""",
-            (event_id,),
+            "SELECT author_id, access_type FROM events WHERE id = ?", (event_id,)
         )
         if not event:
-            return False
-        if event["creator_id"] == user_id:
-            return True
-        if event["visibility"] == "private":
-            return False
-        if event["visibility"] == "public":
-            if event["teamlead_id"] == user_id:
-                return True
-            return bool(self.db.fetch_one(
-                "SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ?",
-                (event["team_id"], user_id),
-            ))
-        return bool(self.db.fetch_one(
-            "SELECT 1 AS ok FROM event_members WHERE event_id=? AND user_id=?",
-            (event_id, user_id),
-        ))
+            return None
+        if event["author_id"] == user_id:
+            return "full"
+        if event["access_type"] == "private":
+            return None
+        if event["access_type"] == "public":
+            return "edit_tasks"
+        if event["access_type"] == "limited":
+            access = self.db.fetch_one(
+                "SELECT permission FROM event_access WHERE event_id = ? AND user_id = ?",
+                (event_id, user_id),
+            )
+            return access["permission"] if access else None
+        return None
 
-    def require_event_access(self, user_id: int, event_id: int) -> None:
+    def has_access_to_event(self, user_id, event_id):
+        return self.get_permission(user_id, event_id) is not None
+
+    def require_event_access(self, user_id, event_id):
         if not self.has_access_to_event(user_id, event_id):
             raise AuthorizationError("У вас нет доступа к этому событию.")
 
-    def is_teamlead_of_event(self, user_id: int, event_id: int) -> bool:
-        return bool(self.db.fetch_one(
-            """SELECT 1 AS ok
-               FROM events e JOIN teams t ON t.id=e.team_id
-               WHERE e.id=? AND t.teamlead_id=?""",
-            (event_id, user_id),
-        ))
+    def require_task_edit(self, user_id, event_id):
+        permission = self.get_permission(user_id, event_id)
+        if permission not in ("edit_tasks", "full"):
+            raise AuthorizationError("У вас нет права изменять задачи этого события.")
+        return permission
 
-    def get_team_members_for_event(self, event_id: int) -> list[dict]:
-        event = self.get_event(event_id)
-        return self.db.fetch_all(
+    def get_team_members_for_event(self, event_id, teamlead_id):
+        members = self.db.fetch_all(
             """SELECT DISTINCT u.id, u.username, u.email, u.role
-               FROM users u
-               JOIN team_members tm ON tm.user_id=u.id
-               WHERE tm.team_id=? AND u.id != ?
-               ORDER BY u.username""",
-            (event["team_id"], event["teamlead_id"]),
+               FROM users u JOIN group_members gm ON gm.user_id = u.id
+               JOIN groups g ON g.id = gm.group_id
+               WHERE g.creator_id = ? AND u.id != ? ORDER BY u.username""",
+            (teamlead_id, teamlead_id),
         )
-
-    def get_event_members(self, event_id: int) -> list[dict]:
-        return self.db.fetch_all(
-            """SELECT u.id, u.username, u.email, u.role
-               FROM event_members em JOIN users u ON u.id=em.user_id
-               WHERE em.event_id=? ORDER BY u.username""",
-            (event_id,),
-        )
+        return [user for user in members if self.has_access_to_event(user["id"], event_id)]

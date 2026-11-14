@@ -13,7 +13,10 @@ def main():
     parser.add_argument("--user", type=int, required=True, help="ID существующего пользователя")
     parser.add_argument("--event", type=int, help="ID события, задачи которого нужно открыть")
     args = parser.parse_args()
-    db.init_db()
+    try:
+        db.init_db()
+    except ValueError as exc:
+        parser.error(str(exc))
 
     row = db.fetch_one("SELECT id, username, email, role FROM users WHERE id=?", (args.user,))
     if not row:

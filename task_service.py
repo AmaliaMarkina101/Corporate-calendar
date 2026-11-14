@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from db import Database
 from auth import User, AuthorizationError
@@ -51,7 +50,7 @@ class TaskService:
         deadline: str,
         reminder_time: str | None = None,
     ) -> int:
-        self.events.require_event_access(self.current_user.id, event_id)
+        self.events.require_task_edit(self.current_user.id, event_id)
         title = (title or "").strip()
         if not title:
             raise ValueError("Название задачи не может быть пустым.")
@@ -63,8 +62,6 @@ class TaskService:
             raise ValueError("Время напоминания не может быть позже срока выполнения.")
 
         if self.current_user.role == "teamlead":
-            if not self.events.is_teamlead_of_event(self.current_user.id, event_id):
-                raise AuthorizationError("Назначать исполнителей может только тимлид этой команды.")
             if assignee_id is None:
                 assignee_id = self.current_user.id
             self._validate_assignee(event_id, int(assignee_id))
@@ -86,15 +83,14 @@ class TaskService:
         if new_status not in STATUSES:
             raise ValueError("Недопустимый статус задачи.")
         task = self._get_task(task_id)
-        self.events.require_event_access(self.current_user.id, task["event_id"])
+        permission = self.events.require_task_edit(self.current_user.id, task["event_id"])
         can_change = (
-            self.current_user.role == "admin"
+            permission == "full"
             or task["assignee_id"] == self.current_user.id
             or task["creator_id"] == self.current_user.id
-            or self.events.is_teamlead_of_event(self.current_user.id, task["event_id"])
         )
         if not can_change:
-            raise AuthorizationError("Менять статус может исполнитель, создатель или тимлид команды.")
+            raise AuthorizationError("Нельзя менять статус чужой задачи без полного доступа.")
         self.db.execute("UPDATE tasks SET status=? WHERE id=?", (new_status, task_id))
 
     def add_comment(self, task_id: int, user_id: int, text: str) -> int:
@@ -128,11 +124,13 @@ class TaskService:
 
     def assign_task(self, task_id: int, new_assignee_id: int) -> None:
         task = self._get_task(task_id)
-        self.events.require_event_access(self.current_user.id, task["event_id"])
-        if self.current_user.role != "teamlead" or not self.events.is_teamlead_of_event(
-            self.current_user.id, task["event_id"]
+        permission = self.events.require_task_edit(self.current_user.id, task["event_id"])
+        if self.current_user.role != "teamlead":
+            raise AuthorizationError("Назначать исполнителя может только тимлид.")
+        if permission != "full" and self.current_user.id not in (
+            task["creator_id"], task["assignee_id"]
         ):
-            raise AuthorizationError("Назначать исполнителя может только тимлид этой команды.")
+            raise AuthorizationError("Нельзя переназначать чужую задачу без полного доступа.")
         self._validate_assignee(task["event_id"], new_assignee_id)
         self.db.execute(
             "UPDATE tasks SET assignee_id=? WHERE id=?",
@@ -140,18 +138,11 @@ class TaskService:
         )
 
     def _validate_assignee(self, event_id: int, assignee_id: int) -> None:
-        event = self.events.get_event(event_id)
-        if assignee_id == event["teamlead_id"]:
+        if assignee_id == self.current_user.id:
             return
-        valid = self.db.fetch_one(
-            """SELECT 1 AS ok FROM team_members tm
-               WHERE tm.team_id=? AND tm.user_id=?""",
-            (event["team_id"], assignee_id),
-        )
-        if not valid:
-            raise ValueError("Исполнитель должен входить в команду этого события.")
-        if not self.events.has_access_to_event(assignee_id, event_id):
-            raise ValueError("У исполнителя нет доступа к этому событию.")
+        members = self.events.get_team_members_for_event(event_id, self.current_user.id)
+        if assignee_id not in [user["id"] for user in members]:
+            raise ValueError("Исполнитель должен входить в вашу группу и иметь доступ к событию.")
 
     def get_comments(self, task_id: int) -> list[dict]:
         task = self._get_task(task_id)
