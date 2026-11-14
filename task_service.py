@@ -55,12 +55,12 @@ class TaskService:
         title = (title or "").strip()
         if not title:
             raise ValueError("Название задачи не может быть пустым.")
-        deadline_value = self._parse_datetime(deadline, "Дедлайн", required=True)
+        deadline_value = self._parse_datetime(deadline, "Срок выполнения", required=True)
         reminder_value = self._parse_datetime(
             reminder_time, "Время напоминания", required=False
         )
         if reminder_value and reminder_value > deadline_value:
-            raise ValueError("Время напоминания не может быть позже дедлайна.")
+            raise ValueError("Время напоминания не может быть позже срока выполнения.")
 
         if self.current_user.role == "teamlead":
             if not self.events.is_teamlead_of_event(self.current_user.id, event_id):
