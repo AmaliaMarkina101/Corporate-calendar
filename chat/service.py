@@ -5,11 +5,6 @@ import auth
 import event_service
 
 
-def display_name(user):
-    name = f"{user['first_name']} {user['last_name']}".strip()
-    return name or user["username"]
-
-
 class ChatService:
     def __init__(self, database, current_user):
         self.db = database
@@ -19,7 +14,7 @@ class ChatService:
 
     def _get_user(self, user_id):
         user = self.db.fetch_one(
-            "SELECT id, username, first_name, last_name FROM users WHERE id = ?",
+            "SELECT id, username FROM users WHERE id = ?",
             (user_id,),
         )
         if not user:
@@ -53,7 +48,7 @@ class ChatService:
     def get_group_messages(self, event_id):
         self.events.require_event_access(self.current_user.id, event_id)
         messages = self.db.fetch_all(
-            """SELECT m.*, u.username, u.first_name, u.last_name
+            """SELECT m.*, u.username
                FROM chat_messages m JOIN users u ON u.id = m.sender_id
                WHERE m.event_id = ?
                ORDER BY m.created_at DESC, m.id DESC LIMIT 50""",
@@ -61,7 +56,7 @@ class ChatService:
         )
         messages.reverse()
         for message in messages:
-            message["sender_name"] = display_name(message)
+            message["sender_name"] = message["username"]
         return messages
 
     def send_private_message(self, sender_id, receiver_id, text):
@@ -80,7 +75,7 @@ class ChatService:
         self._get_user(user1_id)
         self._get_user(user2_id)
         messages = self.db.fetch_all(
-            """SELECT m.*, u.username, u.first_name, u.last_name
+            """SELECT m.*, u.username
                FROM private_messages m JOIN users u ON u.id = m.sender_id
                WHERE (m.sender_id = ? AND m.receiver_id = ?)
                   OR (m.sender_id = ? AND m.receiver_id = ?)
@@ -88,7 +83,7 @@ class ChatService:
             (user1_id, user2_id, user2_id, user1_id),
         )
         for message in messages:
-            message["sender_name"] = display_name(message)
+            message["sender_name"] = message["username"]
         return messages
 
     def get_user_chats(self, user_id):
@@ -126,7 +121,7 @@ class ChatService:
                 (user_id, person["id"], person["id"], user_id),
             )
             chats.append({
-                "type": "private", "id": user["id"], "title": display_name(user),
+                "type": "private", "id": user["id"], "title": user["username"],
                 "last_message": last["text"], "last_message_at": last["created_at"],
                 "last_message_id": last["id"],
             })
@@ -140,15 +135,14 @@ class ChatService:
         found = []
         with contextlib.closing(self.db.connect()) as conn:
             users = conn.execute(
-                """SELECT id, username, first_name, last_name FROM users
-                   WHERE id != ? ORDER BY last_name, first_name, username""",
+                """SELECT id, username FROM users
+                   WHERE id != ? ORDER BY username""",
                 (self.current_user.id,),
             )
             for row in users:
                 user = dict(row)
-                name = display_name(user)
-                if not query or query in name.casefold() or query in user["username"].casefold():
-                    user["display_name"] = name
+                if not query or query in user["username"].casefold():
+                    user["display_name"] = user["username"]
                     found.append(user)
                     if len(found) == 20:
                         break
@@ -158,14 +152,14 @@ class ChatService:
         self.events.require_event_access(self.current_user.id, event_id)
         event = self.events.get_event(event_id)
         users = self.db.fetch_all(
-            "SELECT id, username, first_name, last_name FROM users ORDER BY last_name, first_name, username"
+            "SELECT id, username FROM users ORDER BY username"
         )
         event["members"] = []
-        event["creator_name"] = "Не указан"
+        event["author_name"] = "Не указан"
         for user in users:
-            if user["id"] == event["creator_id"]:
-                event["creator_name"] = display_name(user)
+            if user["id"] == event["author_id"]:
+                event["author_name"] = user["username"]
             if self.events.has_access_to_event(user["id"], event_id):
-                user["display_name"] = display_name(user)
+                user["display_name"] = user["username"]
                 event["members"].append(user)
         return event

@@ -48,7 +48,7 @@ class NewDialog(ctk.CTkToplevel):
             self.note.configure(text="Показаны первые 20 пользователей. Найдите нужного человека через поиск.")
         for row, user in enumerate(users):
             ctk.CTkButton(
-                self.people, text=f"{user['display_name']}\n@{user['username']}",
+                self.people, text=user["display_name"],
                 anchor="w", height=55,
                 command=lambda person=user: self._select_user(person),
             ).grid(row=row, column=0, sticky="ew", padx=4, pady=4)
@@ -153,7 +153,7 @@ class ChatWindow(ctk.CTkToplevel):
                 chats = [{
                     "type": "private", "id": person["id"],
                     "title": person["display_name"],
-                    "last_message": "@" + person["username"],
+                    "last_message": "Открыть диалог",
                 } for person in people]
             else:
                 chats = self.service.get_user_chats(self.current_user.id)
@@ -234,11 +234,11 @@ class ChatWindow(ctk.CTkToplevel):
         except (ValueError, PermissionError, sqlite3.Error) as exc:
             messagebox.showerror("Не удалось загрузить участников", str(exc), parent=self)
             return
-        access = {"private": "Только автор", "restricted": "Выбранные пользователи", "public": "Вся команда"}
-        people = "\n".join(f"{user['display_name']} (@{user['username']})" for user in event["members"])
+        access = {"private": "Только автор", "limited": "Выбранные пользователи", "public": "Все пользователи"}
+        people = "\n".join(user["display_name"] for user in event["members"])
         messagebox.showinfo(
             "Участники чата события",
-            f"{event['title']}\nАвтор: {event['creator_name']}\nДоступ: {access[event['visibility']]}\n\n"
+            f"{event['title']}\nАвтор: {event['author_name']}\nДоступ: {access[event['access_type']]}\n\n"
             f"Участники:\n{people}\n\n"
             "Доступ к этому чату определяется доступом к событию. "
             "Добавление и исключение участников выполняется в настройках события.",
