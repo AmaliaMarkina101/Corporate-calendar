@@ -130,9 +130,37 @@ class ChatTests(unittest.TestCase):
         for query in ("АННА", "ПЕТРОВА", "анна петрова", "MEMBER1"):
             with self.subTest(query=query):
                 self.assertEqual([u["id"] for u in self.chats[1].search_users(query)], [2])
-        self.assertEqual(self.chats[1].search_users("  "), [])
+        self.assertEqual({u["id"] for u in self.chats[1].search_users("  ")}, {2, 3, 4})
         self.assertEqual(self.chats[1].search_users("Павел"), [])
         self.assertEqual(self.chats[1].search_users("Несуществующий"), [])
+
+    def test_new_dialog_lists_up_to_20_people_and_search_finds_the_rest(self):
+        for index in range(30):
+            self.database.execute(
+                """INSERT INTO users (username, email, password, role, first_name, last_name)
+                   VALUES (?, ?, 'demo', 'member', ?, 'Участник')""",
+                (f"person{index}", f"person{index}@example.com", f"Имя{index:02d}"),
+            )
+        users = self.chats[1].search_users()
+        self.assertEqual(len(users), 20)
+        self.assertNotIn(1, [u["id"] for u in users])
+        self.assertFalse(any(u["username"] == "person29" for u in users))
+        self.assertEqual(self.chats[1].search_users("ИМЯ29")[0]["username"], "person29")
+
+    def test_participants_follow_event_access_and_are_hidden_from_outsiders(self):
+        for visibility, members, expected in [
+            ("private", (3,), {2}),
+            ("restricted", (3,), {2, 3}),
+            ("public", (), {1, 2, 3}),
+        ]:
+            with self.subTest(visibility=visibility):
+                event_id = self.create_event(visibility, creator=2, members=members)
+                info = self.chats[2].get_group_info(event_id)
+                self.assertEqual({u["id"] for u in info["members"]}, expected)
+                self.assertEqual(info["creator_name"], "Анна Петрова")
+                self.assertEqual(info["visibility"], visibility)
+                with self.assertRaises(auth.AuthorizationError):
+                    self.chats[4].get_group_info(event_id)
 
     def test_tasks_still_work_with_shared_permissions(self):
         tasks = TaskService(self.database, self.users[2])
