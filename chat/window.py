@@ -157,6 +157,9 @@ class ChatWindow(ctk.CTkToplevel):
                 } for person in people]
             else:
                 chats = self.service.get_user_chats(self.current_user.id)
+            for chat in chats:
+                if self.selected_chat == (chat["type"], chat["id"]):
+                    self.heading.configure(text=chat["title"])
         except (ValueError, PermissionError, sqlite3.Error) as exc:
             self.status.configure(text=f"Не удалось обновить чаты: {exc}")
             return

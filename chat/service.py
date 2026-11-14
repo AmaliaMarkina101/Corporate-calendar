@@ -94,43 +94,44 @@ class ChatService:
     def get_user_chats(self, user_id):
         self._check_current_user(user_id)
         chats = []
-        events = self.db.fetch_all(
-            """SELECT e.id, e.title, m.text, m.created_at, m.id AS message_id
-               FROM events e LEFT JOIN chat_messages m ON m.id = (
-                   SELECT id FROM chat_messages WHERE event_id = e.id
-                   ORDER BY created_at DESC, id DESC LIMIT 1
-               )"""
-        )
+        events = self.db.fetch_all("SELECT id, title FROM events")
         for event in events:
-            if self.events.has_access_to_event(user_id, event["id"]):
-                chats.append({
-                    "type": "group", "id": event["id"], "title": event["title"],
-                    "last_message": event["text"] or "",
-                    "last_message_at": event["created_at"] or "",
-                    "last_message_id": event["message_id"] or 0,
-                })
+            if not self.events.has_access_to_event(user_id, event["id"]):
+                continue
+            last = self.db.fetch_one(
+                """SELECT id, text, created_at FROM chat_messages WHERE event_id = ?
+                   ORDER BY created_at DESC, id DESC LIMIT 1""",
+                (event["id"],),
+            )
+            chats.append({
+                "type": "group", "id": event["id"], "title": event["title"],
+                "last_message": last["text"] if last else "",
+                "last_message_at": last["created_at"] if last else "",
+                "last_message_id": last["id"] if last else 0,
+            })
 
         people = self.db.fetch_all(
-            """SELECT u.id, u.username, u.first_name, u.last_name,
-                      m.text, m.created_at, m.id AS message_id
-               FROM users u JOIN private_messages m ON m.id = (
-                   SELECT id FROM private_messages
-                   WHERE (sender_id = ? AND receiver_id = u.id)
-                      OR (receiver_id = ? AND sender_id = u.id)
-                   ORDER BY created_at DESC, id DESC LIMIT 1
-               )""",
+            """SELECT receiver_id AS id FROM private_messages WHERE sender_id = ?
+               UNION
+               SELECT sender_id AS id FROM private_messages WHERE receiver_id = ?""",
             (user_id, user_id),
         )
         for person in people:
+            user = self._get_user(person["id"])
+            last = self.db.fetch_one(
+                """SELECT id, text, created_at FROM private_messages
+                   WHERE (sender_id = ? AND receiver_id = ?)
+                      OR (sender_id = ? AND receiver_id = ?)
+                   ORDER BY created_at DESC, id DESC LIMIT 1""",
+                (user_id, person["id"], person["id"], user_id),
+            )
             chats.append({
-                "type": "private", "id": person["id"], "title": display_name(person),
-                "last_message": person["text"], "last_message_at": person["created_at"],
-                "last_message_id": person["message_id"],
+                "type": "private", "id": user["id"], "title": display_name(user),
+                "last_message": last["text"], "last_message_at": last["created_at"],
+                "last_message_id": last["id"],
             })
 
-        chats.sort(key=lambda chat: (
-            chat["last_message_at"], chat["last_message_id"], chat["type"], chat["id"]
-        ), reverse=True)
+        chats.sort(key=lambda chat: (chat["last_message_at"], chat["last_message_id"]), reverse=True)
         return chats
 
     def search_users(self, query=""):
