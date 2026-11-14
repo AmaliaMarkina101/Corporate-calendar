@@ -31,18 +31,19 @@ class MainWindow(ctk.CTk):
         header.grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 10))
         header.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
-            header, text=event["title"],
-            font=ctk.CTkFont(size=22, weight="bold")
+            header, text=f"Событие / проект: {event['title']}",
+            font=ctk.CTkFont(size=22, weight="bold"), wraplength=700,
         ).grid(row=0, column=0, sticky="w", padx=14, pady=(12, 2))
+        roles = {"admin": "Администратор", "teamlead": "Тимлид", "member": "Участник"}
         ctk.CTkLabel(
             header,
-            text=f"Пользователь: {current_user.username} ({current_user.role})",
+            text=f"Пользователь: {current_user.username} — {roles[current_user.role]}",
         ).grid(row=1, column=0, sticky="w", padx=14, pady=(0, 12))
         ctk.CTkButton(
             header, text="Создать задачу", command=self._open_create
         ).grid(row=0, column=1, padx=14, pady=(12, 4))
         ctk.CTkButton(
-            header, text="Чат события", command=self._open_chat
+            header, text="Чаты", command=self._open_chat
         ).grid(row=1, column=1, padx=14, pady=(4, 12))
 
         self.task_list = ctk.CTkScrollableFrame(self, label_text="Список задач")
@@ -77,9 +78,8 @@ class MainWindow(ctk.CTk):
 
     def _open_chat(self):
         if self.chat_window is None or not self.chat_window.winfo_exists():
-            self.chat_window = ChatWindow(self, self.db, self.current_user, self.event_id)
+            self.chat_window = ChatWindow(self, self.db, self.current_user)
         else:
-            self.chat_window.open_event(self.event_id)
             self.chat_window.deiconify()
             self.chat_window.lift()
             self.chat_window.focus_set()

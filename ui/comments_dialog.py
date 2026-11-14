@@ -18,8 +18,8 @@ class CommentsDialog(ctk.CTkToplevel):
         self.grid_rowconfigure(1, weight=1)
 
         ctk.CTkLabel(
-            self, text=f"Комментарии к задаче #{task['id']}",
-            font=ctk.CTkFont(size=18, weight="bold")
+            self, text=f"Комментарии: {task['title']}",
+            font=ctk.CTkFont(size=18, weight="bold"), wraplength=560,
         ).grid(row=0, column=0, sticky="w", padx=16, pady=12)
 
         self.history = ctk.CTkScrollableFrame(self)
