@@ -1,4 +1,5 @@
 import datetime
+import contextlib
 
 import auth
 import event_service
@@ -132,20 +133,38 @@ class ChatService:
         ), reverse=True)
         return chats
 
-    def search_users(self, query):
+    def search_users(self, query=""):
         self._check_current_user(self.current_user.id)
         query = query.strip().casefold()
-        if not query:
-            return []
-        users = self.db.fetch_all(
-            """SELECT id, username, first_name, last_name FROM users
-               WHERE id != ? ORDER BY last_name, first_name, username""",
-            (self.current_user.id,),
-        )
         found = []
-        for user in users:
-            name = display_name(user)
-            if query in name.casefold() or query in user["username"].casefold():
-                user["display_name"] = name
-                found.append(user)
+        with contextlib.closing(self.db.connect()) as conn:
+            users = conn.execute(
+                """SELECT id, username, first_name, last_name FROM users
+                   WHERE id != ? ORDER BY last_name, first_name, username""",
+                (self.current_user.id,),
+            )
+            for row in users:
+                user = dict(row)
+                name = display_name(user)
+                if not query or query in name.casefold() or query in user["username"].casefold():
+                    user["display_name"] = name
+                    found.append(user)
+                    if len(found) == 20:
+                        break
         return found
+
+    def get_group_info(self, event_id):
+        self.events.require_event_access(self.current_user.id, event_id)
+        event = self.events.get_event(event_id)
+        users = self.db.fetch_all(
+            "SELECT id, username, first_name, last_name FROM users ORDER BY last_name, first_name, username"
+        )
+        event["members"] = []
+        event["creator_name"] = "Не указан"
+        for user in users:
+            if user["id"] == event["creator_id"]:
+                event["creator_name"] = display_name(user)
+            if self.events.has_access_to_event(user["id"], event_id):
+                user["display_name"] = display_name(user)
+                event["members"].append(user)
+        return event

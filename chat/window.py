@@ -1,11 +1,61 @@
 import datetime
 import sqlite3
-import tkinter as tk
 import tkinter.messagebox as messagebox
 
 import customtkinter as ctk
 
 from chat import service
+
+
+class NewDialog(ctk.CTkToplevel):
+    def __init__(self, master, chat_service, on_select):
+        super().__init__(master)
+        self.service = chat_service
+        self.on_select = on_select
+        self.title("Новый диалог")
+        self.geometry("430x520")
+        self.minsize(360, 360)
+        self.transient(master)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(2, weight=1)
+        ctk.CTkLabel(self, text="Найти человека", anchor="w").grid(
+            row=0, column=0, sticky="ew", padx=16, pady=(16, 4)
+        )
+        self.search = ctk.CTkEntry(self, placeholder_text="Имя, фамилия или логин")
+        self.search.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 10))
+        self.search.bind("<KeyRelease>", self._load_users)
+        self.people = ctk.CTkScrollableFrame(self)
+        self.people.grid(row=2, column=0, sticky="nsew", padx=12)
+        self.people.grid_columnconfigure(0, weight=1)
+        self.note = ctk.CTkLabel(self, text="", wraplength=370, justify="left")
+        self.note.grid(row=3, column=0, sticky="ew", padx=16, pady=12)
+        self._load_users()
+        self.search.focus_set()
+
+    def _load_users(self, event=None):
+        for child in self.people.winfo_children():
+            child.destroy()
+        try:
+            users = self.service.search_users(self.search.get())
+        except (ValueError, PermissionError, sqlite3.Error) as exc:
+            self.note.configure(text=str(exc))
+            return
+        if not users:
+            self.note.configure(text="Пользователи не найдены. Попробуйте другое имя или логин.")
+            return
+        self.note.configure(text="Выберите человека. Если его нет в списке, воспользуйтесь поиском.")
+        if len(users) == 20:
+            self.note.configure(text="Показаны первые 20 пользователей. Найдите нужного человека через поиск.")
+        for row, user in enumerate(users):
+            ctk.CTkButton(
+                self.people, text=f"{user['display_name']}\n@{user['username']}",
+                anchor="w", height=55,
+                command=lambda person=user: self._select_user(person),
+            ).grid(row=row, column=0, sticky="ew", padx=4, pady=4)
+
+    def _select_user(self, user):
+        self.on_select({"type": "private", "id": user["id"], "title": user["display_name"]})
+        self.destroy()
 
 
 class ChatWindow(ctk.CTkToplevel):
@@ -14,10 +64,10 @@ class ChatWindow(ctk.CTkToplevel):
         self.current_user = current_user
         self.service = service.ChatService(database, current_user)
         self.selected_chat = None
-        self._chat_signature = None
-        self._message_signature = None
+        self._shown_chats = None
+        self._shown_messages = None
         self._poll_job = None
-        self._search_job = None
+        self.new_dialog = None
 
         self.title(f"Чат — {current_user.username}")
         self.geometry("1000x680")
@@ -29,31 +79,46 @@ class ChatWindow(ctk.CTkToplevel):
         sidebar = ctk.CTkFrame(self, width=280, corner_radius=0)
         sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         sidebar.grid_columnconfigure(0, weight=1)
-        sidebar.grid_rowconfigure(2, weight=1)
+        sidebar.grid_rowconfigure(4, weight=1)
         ctk.CTkLabel(sidebar, text="Чаты", font=ctk.CTkFont(size=22, weight="bold")).grid(
             row=0, column=0, sticky="w", padx=14, pady=(14, 10)
         )
-        self.search = tk.StringVar(master=self)
-        ctk.CTkEntry(
-            sidebar, textvariable=self.search, placeholder_text="Имя, фамилия или логин",
-            width=260,
-        ).grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 10))
+        ctk.CTkButton(sidebar, text="Новый диалог", command=self._open_new_dialog).grid(
+            row=1, column=0, sticky="ew", padx=12, pady=(0, 12)
+        )
+        ctk.CTkLabel(sidebar, text="Поиск людей", anchor="w").grid(
+            row=2, column=0, sticky="ew", padx=14, pady=(0, 4)
+        )
+        self.search = ctk.CTkEntry(sidebar, placeholder_text="Имя, фамилия или логин", width=260)
+        self.search.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 10))
+        self.search.bind("<KeyRelease>", self._refresh_chats)
         self.chat_list = ctk.CTkScrollableFrame(sidebar, fg_color="transparent")
-        self.chat_list.grid(row=2, column=0, sticky="nsew", padx=6, pady=(0, 8))
+        self.chat_list.grid(row=4, column=0, sticky="nsew", padx=6, pady=(0, 8))
         self.chat_list.grid_columnconfigure(0, weight=1)
-        self.search.trace_add("write", self._search_changed)
 
         content = ctk.CTkFrame(self, corner_radius=0)
         content.grid(row=0, column=1, sticky="nsew")
         content.grid_columnconfigure(0, weight=1)
         content.grid_rowconfigure(1, weight=1)
+        header = ctk.CTkFrame(content, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=16, pady=12)
+        header.grid_columnconfigure(0, weight=1)
         self.heading = ctk.CTkLabel(
-            content, text="Выберите чат", anchor="w",
+            header, text="Выберите чат", anchor="w",
             font=ctk.CTkFont(size=20, weight="bold"), wraplength=530,
         )
-        self.heading.grid(row=0, column=0, sticky="ew", padx=16, pady=14)
+        self.heading.grid(row=0, column=0, sticky="ew")
+        self.chat_note = ctk.CTkLabel(header, text="", anchor="w", wraplength=450, justify="left")
+        self.chat_note.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        self.members_button = ctk.CTkButton(header, text="Участники", width=105, command=self._show_members)
+        self.members_button.grid(row=0, column=1, rowspan=2, padx=(8, 0))
+        self.members_button.grid_remove()
         self.history = ctk.CTkTextbox(content, wrap="word", state="disabled")
         self.history.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 8))
+        self.history.configure(state="normal")
+        self.history.insert("end", "Выберите чат слева или нажмите «Новый диалог», чтобы написать человеку.\n\n"
+                            "Чаты событий появляются, когда у вас есть доступ к соответствующим событиям.")
+        self.history.configure(state="disabled")
         self.status = ctk.CTkLabel(content, text="", anchor="w", wraplength=550)
         self.status.grid(row=2, column=0, sticky="ew", padx=16)
 
@@ -73,16 +138,14 @@ class ChatWindow(ctk.CTkToplevel):
             self.open_event(event_id)
         self._poll_job = self.after(2000, self._poll)
 
-    def _search_changed(self, *args):
-        if self._search_job is not None:
-            self.after_cancel(self._search_job)
-        self._search_job = self.after(250, self._run_search)
+    def _open_new_dialog(self):
+        if self.new_dialog is None or not self.new_dialog.winfo_exists():
+            self.new_dialog = NewDialog(self, self.service, self._select_chat)
+        else:
+            self.new_dialog.lift()
+            self.new_dialog.focus_set()
 
-    def _run_search(self):
-        self._search_job = None
-        self._refresh_chats()
-
-    def _refresh_chats(self):
+    def _refresh_chats(self, event=None):
         query = self.search.get().strip()
         try:
             if query:
@@ -98,23 +161,24 @@ class ChatWindow(ctk.CTkToplevel):
             self.status.configure(text=f"Не удалось обновить чаты: {exc}")
             return
 
-        signature = (query, self.selected_chat, tuple(
-            (chat["type"], chat["id"], chat["title"], chat["last_message"])
-            for chat in chats
-        ))
-        if signature == self._chat_signature:
+        shown = (query, self.selected_chat, chats)
+        if shown == self._shown_chats:
             return
-        self._chat_signature = signature
+        self._shown_chats = shown
         for child in self.chat_list.winfo_children():
             child.destroy()
         if not chats:
-            text = "Никого не найдено" if query else "Переписок пока нет"
-            ctk.CTkLabel(self.chat_list, text=text).grid(row=0, column=0, padx=8, pady=16)
+            text = "Никого не найдено" if query else "Переписок пока нет.\nНажмите «Новый диалог»,\nчтобы написать человеку."
+            if not query and self.selected_chat is not None:
+                text = "Диалог появится в списке\nпосле первого сообщения."
+            ctk.CTkLabel(self.chat_list, text=text, wraplength=240, justify="left").grid(
+                row=0, column=0, padx=8, pady=16
+            )
             return
         for row, chat in enumerate(chats):
             title = chat["title"]
             if chat["type"] == "group":
-                title = "Группа: " + title
+                title = "Событие: " + title
             if len(title) > 30:
                 title = title[:29] + "…"
             preview = chat["last_message"].replace("\n", " ")
@@ -131,13 +195,19 @@ class ChatWindow(ctk.CTkToplevel):
 
     def _select_chat(self, chat):
         self.selected_chat = (chat["type"], chat["id"])
-        self._message_signature = None
+        self._shown_messages = None
         self.heading.configure(text=chat["title"])
+        if chat["type"] == "group":
+            self.chat_note.configure(text="Чат события. Участники определяются доступом к событию.")
+            self.members_button.grid()
+        else:
+            self.chat_note.configure(text="Личная переписка")
+            self.members_button.grid_remove()
         self.input_box.configure(state="normal")
         self.input_box.delete("1.0", "end")
         self.send_button.configure(state="normal")
         if self.search.get():
-            self.search.set("")
+            self.search.delete(0, "end")
         self._load_messages(force=True)
         self._refresh_chats()
         self.input_box.focus_set()
@@ -151,6 +221,25 @@ class ChatWindow(ctk.CTkToplevel):
             return
         self._select_chat({"type": "group", "id": event_id, "title": event["title"]})
 
+    def _show_members(self):
+        if self.selected_chat is None or self.selected_chat[0] != "group":
+            return
+        try:
+            event = self.service.get_group_info(self.selected_chat[1])
+        except (ValueError, PermissionError, sqlite3.Error) as exc:
+            messagebox.showerror("Не удалось загрузить участников", str(exc), parent=self)
+            return
+        access = {"private": "Только автор", "restricted": "Выбранные пользователи", "public": "Вся команда"}
+        people = "\n".join(f"{user['display_name']} (@{user['username']})" for user in event["members"])
+        messagebox.showinfo(
+            "Участники чата события",
+            f"{event['title']}\nАвтор: {event['creator_name']}\nДоступ: {access[event['visibility']]}\n\n"
+            f"Участники:\n{people}\n\n"
+            "Доступ к этому чату определяется доступом к событию. "
+            "Добавление и исключение участников выполняется в настройках события.",
+            parent=self,
+        )
+
     def _load_messages(self, force=False):
         if self.selected_chat is None:
             return
@@ -162,8 +251,10 @@ class ChatWindow(ctk.CTkToplevel):
                 messages = self.service.get_private_messages(self.current_user.id, chat_id)
         except (ValueError, PermissionError) as exc:
             self.selected_chat = None
-            self._message_signature = None
+            self._shown_messages = None
             self.heading.configure(text="Чат недоступен")
+            self.chat_note.configure(text="Доступ к событию мог измениться.")
+            self.members_button.grid_remove()
             self.history.configure(state="normal")
             self.history.delete("1.0", "end")
             self.history.configure(state="disabled")
@@ -177,10 +268,9 @@ class ChatWindow(ctk.CTkToplevel):
             return
 
         self.status.configure(text="")
-        signature = tuple((m["id"], m["text"], m["sender_name"], m["created_at"]) for m in messages)
-        if not force and signature == self._message_signature:
+        if not force and messages == self._shown_messages:
             return
-        self._message_signature = signature
+        self._shown_messages = messages
         position = self.history.yview()
         scroll_to_end = force or position[1] >= 0.98
         self.history.configure(state="normal")
@@ -228,9 +318,7 @@ class ChatWindow(ctk.CTkToplevel):
         self._poll_job = self.after(2000, self._poll)
 
     def destroy(self):
-        for job in (self._poll_job, self._search_job):
-            if job is not None:
-                self.after_cancel(job)
+        if self._poll_job is not None:
+            self.after_cancel(self._poll_job)
         self._poll_job = None
-        self._search_job = None
         super().destroy()
