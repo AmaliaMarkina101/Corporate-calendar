@@ -6,6 +6,7 @@ from ui.task_card import TaskCard
 from ui.create_task_dialog import CreateTaskDialog
 from ui.comments_dialog import CommentsDialog
 from ui.assign_dialog import AssignDialog
+from chat.window import ChatWindow
 
 
 class MainWindow(ctk.CTk):
@@ -14,6 +15,7 @@ class MainWindow(ctk.CTk):
         self.db = database
         self.current_user = current_user
         self.event_id = event_id
+        self.chat_window = None
         from task_service import TaskService
         self.service = TaskService(database, current_user)
         self.events = EventService(database)
@@ -38,7 +40,10 @@ class MainWindow(ctk.CTk):
         ).grid(row=1, column=0, sticky="w", padx=14, pady=(0, 12))
         ctk.CTkButton(
             header, text="Создать задачу", command=self._open_create
-        ).grid(row=0, column=1, rowspan=2, padx=14, pady=12)
+        ).grid(row=0, column=1, padx=14, pady=(12, 4))
+        ctk.CTkButton(
+            header, text="Чат события", command=self._open_chat
+        ).grid(row=1, column=1, padx=14, pady=(4, 12))
 
         self.task_list = ctk.CTkScrollableFrame(self, label_text="Список задач")
         self.task_list.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
@@ -69,6 +74,15 @@ class MainWindow(ctk.CTk):
 
     def _open_create(self):
         CreateTaskDialog(self, self.service, self.current_user, self.event_id, self.refresh_tasks)
+
+    def _open_chat(self):
+        if self.chat_window is None or not self.chat_window.winfo_exists():
+            self.chat_window = ChatWindow(self, self.db, self.current_user, self.event_id)
+        else:
+            self.chat_window.open_event(self.event_id)
+            self.chat_window.deiconify()
+            self.chat_window.lift()
+            self.chat_window.focus_set()
 
     def _open_comments(self, task):
         CommentsDialog(self, self.service, self.current_user, task, self.refresh_tasks)
