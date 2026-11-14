@@ -24,7 +24,9 @@ class EventService:
         if not user:
             return False
         event = self.db.fetch_one(
-            "SELECT team_id, creator_id, visibility FROM events WHERE id = ?", (event_id,)
+            """SELECT e.team_id, e.creator_id, e.visibility, t.teamlead_id
+               FROM events e JOIN teams t ON t.id = e.team_id WHERE e.id = ?""",
+            (event_id,),
         )
         if not event:
             return False
@@ -33,13 +35,11 @@ class EventService:
         if event["visibility"] == "private":
             return False
         if event["visibility"] == "public":
+            if event["teamlead_id"] == user_id:
+                return True
             return bool(self.db.fetch_one(
-                """SELECT 1 FROM teams t
-                   WHERE t.id = ? AND (t.teamlead_id = ? OR EXISTS (
-                       SELECT 1 FROM team_members tm
-                       WHERE tm.team_id = t.id AND tm.user_id = ?
-                   ))""",
-                (event["team_id"], user_id, user_id),
+                "SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ?",
+                (event["team_id"], user_id),
             ))
         return bool(self.db.fetch_one(
             "SELECT 1 AS ok FROM event_members WHERE event_id=? AND user_id=?",

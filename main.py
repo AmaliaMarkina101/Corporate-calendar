@@ -1,4 +1,5 @@
 import customtkinter as ctk
+import argparse
 import contextlib
 
 from db import db
@@ -6,8 +7,6 @@ from auth import User
 from ui.main_window import MainWindow
 
 
-# Для проверки участника поменяйте на 2; для тимлида — 1.
-DEMO_USER_ID = 1
 DEMO_EVENT_ID = 1
 
 
@@ -19,28 +18,21 @@ def seed_demo_data(database=db):
         if existing:
             return
 
-        conn.execute(
-            "INSERT INTO users (id, username, email, password, role) VALUES (1, 'lead', 'lead@example.com', 'demo', 'teamlead')"
-        )
-        conn.execute(
-            "INSERT INTO users (id, username, email, password, role) VALUES (2, 'member1', 'member1@example.com', 'demo', 'member')"
-        )
-        conn.execute(
-            "INSERT INTO users (id, username, email, password, role) VALUES (3, 'member2', 'member2@example.com', 'demo', 'member')"
-        )
-        conn.execute(
-            "INSERT INTO users (id, username, email, password, role) VALUES (4, 'admin', 'admin@example.com', 'demo', 'admin')"
+        conn.executemany(
+            """INSERT INTO users (id, username, email, password, role, first_name, last_name)
+               VALUES (?, ?, ?, 'demo', ?, ?, ?)""",
+            [
+                (1, 'lead', 'lead@example.com', 'teamlead', 'Павел', 'Иванов'),
+                (2, 'member1', 'member1@example.com', 'member', 'Анна', 'Петрова'),
+                (3, 'member2', 'member2@example.com', 'member', 'Иван', 'Соколов'),
+                (4, 'admin', 'admin@example.com', 'admin', 'Администратор', ''),
+            ],
         )
         conn.execute("INSERT INTO teams (id, name, teamlead_id) VALUES (1, 'Команда 1', 1)")
         conn.executemany(
             "INSERT INTO team_members (team_id, user_id) VALUES (1, ?)",
             [(1,), (2,), (3,)],
         )
-        conn.execute("""UPDATE users SET first_name = CASE id
-                            WHEN 1 THEN 'Павел' WHEN 2 THEN 'Анна'
-                            WHEN 3 THEN 'Иван' ELSE 'Администратор' END,
-                            last_name = CASE id WHEN 1 THEN 'Иванов'
-                            WHEN 2 THEN 'Петрова' WHEN 3 THEN 'Соколов' ELSE '' END""")
         conn.execute("""INSERT INTO events (id, team_id, title, creator_id, visibility)
                         VALUES (1, 1, 'Подготовка проекта', 1, 'restricted')""")
         conn.executemany(
@@ -50,12 +42,15 @@ def seed_demo_data(database=db):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Календарь: задачи и переписка")
+    parser.add_argument("--user", type=int, default=1, help="ID пользователя для локального запуска")
+    args = parser.parse_args()
     db.init_db()
     seed_demo_data()
 
-    row = db.fetch_one("SELECT id, username, email, role FROM users WHERE id=?", (DEMO_USER_ID,))
+    row = db.fetch_one("SELECT id, username, email, role FROM users WHERE id=?", (args.user,))
     if not row:
-        raise RuntimeError(f"Демонстрационный пользователь id={DEMO_USER_ID} не найден.")
+        parser.error(f"Пользователь id={args.user} не найден.")
     current_user = User.from_row(row)
 
     ctk.set_appearance_mode("System")
