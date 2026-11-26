@@ -3,7 +3,6 @@
 ```bash
 pip install -r requirements.txt
 source ~/venv_cal/bin/activate
-python seed_demo.py 
 python main.py
 ```
 
