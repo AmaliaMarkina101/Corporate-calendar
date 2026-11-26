@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+calendar_demo.db
+*.sqlite
+*.sqlite3
+.venv/
